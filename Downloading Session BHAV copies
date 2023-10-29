@@ -1,0 +1,62 @@
+rm(list = ls())
+
+date <- as.Date(Sys.Date(), format = "%Y-%m-%d")
+day <- format.Date(date, "%d")
+month <- format.Date(date, "%m")
+year <- format.Date(date, "%Y")
+yearYY <- format.Date(date, "%y")
+
+#BSE
+# Downloading Delivery Quantity File
+
+download.file(paste0("https://www.bseindia.com/BSEDATA/gross/",year,"/SCBSEALL",day,"",month,".zip"), paste0("~/Downloads/BSE_DelivQty_",day,"",month,"",year,".zip"))
+unzip(paste0("~/Downloads/BSE_DelivQty_",day,"",month,"",year,".zip"),list=FALSE, exdir = "~/Downloads", unzip = "internal", setTimes = FALSE)
+
+# Downloading EQ BHAV copy
+download.file(paste0("https://www.bseindia.com/download/BhavCopy/Equity/EQ",day,"",month,"",yearYY,"_CSV.ZIP"), paste0("~/Downloads/BSEEQ",day,"",month,"",yearYY,".zip"))
+unzip(paste0("~/Downloads/BSEEQ",day,"",month,"",yearYY,".zip"),files=NULL, overwrite = TRUE, junkpaths = FALSE, list=FALSE, exdir = "~/Downloads", unzip = "internal", setTimes = FALSE)
+
+#Formatting BSE File
+
+bseDelivVol <- read.delim(paste0("~/Downloads/SCBSEALL",day,"",month,".TXT"), header = TRUE, sep = "|", dec = ".") %>% 
+  select(2,3,5,6,1)
+names(bseDelivVol)[1]<-paste("SC_CODE")
+
+bseBHAV <- read.csv(paste0("~/Downloads/EQ",day,"",month,"",yearYY,".csv"))
+
+FullBHAVBSE <- merge.data.frame(bseBHAV, bseDelivVol, by="SC_CODE") %>% 
+  mutate(check = NO_OF_SHRS - DAY.S.VOLUME) %>% 
+  mutate(check1 = NET_TURNOV - DAY.S.TURNOVER)
+
+unique(FullBHAVBSE$check)
+unique(FullBHAVBSE$check1)
+unique(FullBHAVBSE$DATE)
+
+BSEFullBhav <- subset(FullBHAVBSE, select=-c(TDCLOINDI,DAY.S.VOLUME,DAY.S.TURNOVER,check,check1))
+
+#writing BSE Bhav
+write.csv(BSEFullBhav, paste0("~/Documents/Stocks/BSE/BSEBhavComp",month,"",day,"",year,".csv"), row.names=FALSE)
+
+#NSE
+download.file(paste0("https://archives.nseindia.com/products/content/sec_bhavdata_full_",day,"",month,"",year,".csv"), paste0("~/Documents/Stocks/NSE/NSEBhavComp",month,"",day,"",year,".csv"))
+
+# Bulk Trades
+download.file("https://archives.nseindia.com/content/equities/bulk.csv", "~/Documents/Stocks/NSE/Bulk.csv") 
+BulkSummary <- read.csv("~/Documents/Stocks/NSE/Bulk.csv") %>% 
+  mutate(Quantity.Traded = as.numeric(Quantity.Traded)) %>% 
+  mutate (sign = ifelse(Buy.Sell=="SELL", -Quantity.Traded, Quantity.Traded)) %>%  
+  aggregate(cbind(sign) ~ Symbol, sum, na.rm = TRUE)
+names(BulkSummary)[1]<-paste("SYMBOL")
+
+# Indices performance
+download.file(paste0("https://archives.nseindia.com/content/indices/ind_close_all_",day,"",month,"",year,".csv"), paste0("~/Documents/Stocks/NSE/Index/indices_summary_",month,"",day,"",year,".csv"))
+
+# Security names
+download.file("https://archives.nseindia.com/content/equities/EQUITY_L.csv", paste0("~/Documents/Stocks/NSE/security_names.csv"))
+
+#ETF List
+download.file(paste0("https://archives.nseindia.com/content/equities/eq_etfseclist.csv"), "~/Downloads/ETFList.csv")
+etflist <- read.csv("~/Downloads/ETFList.csv") %>% 
+  select(1)
+colnames(etflist)[1] <- "SYMBOL"
+write.csv(etflist, paste0("~/Documents/Stocks/NSE/ETF_List.csv"), row.names=FALSE)
