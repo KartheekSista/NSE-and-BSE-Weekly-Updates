@@ -1,0 +1,178 @@
+# Current day price change - Index, Equity - NSE, BSE
+# Current day volume vs last 5 session volumes - Index, Equity, NSE, BSE
+# Filtering and preparing data
+
+library(dplyr)
+require(plyr)
+require(readr)
+require(xlsx)
+require(data.table)
+
+indices <- read.csv("~/Documents/Stocks/NSE/NSE_Indices.csv")
+index_only <- data.frame("Index.Name" = c("Nifty 50", "Nifty Microcap 250", "Nifty Smallcap 250", "Nifty MidSmallcap 400", "Nifty Midcap 150", "NIFTY LargeMidcap 250"))
+etflist <- read.csv("~/Documents/Stocks/NSE/ETF_List.csv")
+NSEnames <- read.csv("~/Documents/Stocks/NSE/security_names.csv") %>% 
+        select(1,2)
+
+# Reading current day files & calculating Price Change
+
+#NSE
+NSECurrentDay <- read.csv(paste0("~/Documents/Stocks/NSE/NSEBhavComp",month,"",day,"",year,".csv")) %>% 
+        filter(SERIES==" EQ"| SERIES==" BE") %>% 
+        anti_join(etflist, by="SYMBOL") %>% 
+        mutate("Current Day Price Change (%)" = round(((CLOSE_PRICE - PREV_CLOSE)/PREV_CLOSE)*100, digits = 1)) %>% 
+        mutate(Deliv_Vol = ifelse(SERIES == " BE", TTL_TRD_QNTY, as.numeric(DELIV_QTY))) %>% 
+        mutate("TURNOVER (Cr.)" = round(TURNOVER_LACS/100, digits=0)) %>% 
+        select(1,18,4,9,16,17,13) %>% 
+        mutate("V2TRatio" = round(Deliv_Vol/NO_OF_TRADES, digits=2))
+
+# BSE
+BSECurrentDay <- read.csv(paste0("~/Documents/Stocks/BSE/BSEBhavComp",month,"",day,"",year,".csv")) %>% 
+        filter(SC_GROUP== "X "| SC_GROUP=="XT") %>%
+        mutate("Current Day Price Change (%)" = round(((CLOSE - PREVCLOSE)/PREVCLOSE)*100, digits = 1)) %>%
+        mutate("TURNOVER (Lakh.)" = round(NET_TURNOV/10^5, digits=0)) %>% 
+        select(1,2,17,10,8,16,14,11) %>% 
+        mutate("V2TRatio" = round(DELIVERY.QTY/NO_TRADES, digits = 2))
+
+
+# Index
+IndexCurrentDay <- read.csv(paste0("~/Documents/Stocks/NSE/Index/indices_summary_",month,"",day,"",year,".csv")) %>% 
+        semi_join(indices, by="Index.Name") %>% 
+        mutate("Turnover (Cr.)" = round(as.numeric(Turnover..Rs..Cr..)/1, digits=0)) %>% 
+        mutate("VOLUME" = as.numeric(Volume)) %>% 
+        select(1,14,6,8,15)
+
+# Calculating 5 day averages
+
+#NSE
+myfiles = list.files(path="~/Documents/Stocks/NSE/5DAY", pattern="*.csv", full.names=TRUE)
+NSErawbhav5day = ldply(myfiles, read_csv, show_col_types = FALSE)
+
+NSE5dayAverage <- NSErawbhav5day %>% 
+        filter(SERIES=="EQ"| SERIES=="BE") %>% 
+        anti_join(etflist, by="SYMBOL") %>% 
+        mutate(DELIV_QTY = if_else(SERIES == "BE", TTL_TRD_QNTY, as.numeric(DELIV_QTY))) %>% 
+        aggregate(cbind(DELIV_QTY, NO_OF_TRADES) ~ SYMBOL, mean) %>% 
+        mutate("V2TRatio" = round(DELIV_QTY/NO_OF_TRADES, digits = 2))
+
+#BSE
+myfiles = list.files(path="~/Documents/Stocks/BSE/5DAY", pattern="*.csv", full.names=TRUE)
+BSErawbhav5day = ldply(myfiles, read_csv, show_col_types = FALSE)
+
+BSE5dayAverage <- BSErawbhav5day %>% 
+        filter(SC_GROUP== "X"| SC_GROUP=="XT") %>% 
+        aggregate(cbind(DELIVERY.QTY, NO_TRADES) ~ SC_CODE, mean) %>% 
+        mutate("V2TRatio" = round(DELIVERY.QTY/NO_TRADES, digits = 2))
+
+#NSE Index
+myfiles = list.files(path="~/Documents/Stocks/NSE/Index/5Day", pattern="*.csv", full.names=TRUE)
+Index5day = ldply(myfiles, read_csv, show_col_types = FALSE)
+colnames(Index5day)[1] <- "Index.Name"
+
+Index5dayAverage <- Index5day %>% 
+        semi_join(indices, by="Index.Name") %>% 
+        mutate(`Turnover (Rs. Cr.)` = as.numeric(`Turnover (Rs. Cr.)`)) %>% 
+        mutate(Volume = as.numeric(Volume)) %>% 
+        aggregate(Volume ~ Index.Name, mean) 
+
+# Combining Price change and 5 day average tables and calculating volume change
+
+#NSE
+NSECurrentDayChange <- merge.data.frame(NSECurrentDay, NSE5dayAverage, by="SYMBOL") %>% 
+        mutate(Volume.Change = round(((Deliv_Vol-DELIV_QTY)/DELIV_QTY)*100, digits=0)) %>% 
+        mutate(Trade.Change = round((((NO_OF_TRADES.x-NO_OF_TRADES.y)/NO_OF_TRADES.y)*100), digits = 0)) %>% 
+        mutate("V2TRatio.Change" = round(((V2TRatio.x-V2TRatio.y)/V2TRatio.y)*100, digits = 0)) %>% 
+        select(1,2,3,4,5,12,13,14)
+
+#BSE
+BSECurrentDayChange <- merge.data.frame(BSECurrentDay, BSE5dayAverage, by="SC_CODE") %>% 
+        mutate(Volume.Change = round(((DELIVERY.QTY.x-DELIVERY.QTY.y)/DELIVERY.QTY.y)*100, digits=0)) %>% 
+        mutate(Trade.Change = round((((NO_TRADES.x-NO_TRADES.y)/NO_TRADES.y)*100), digits = 0)) %>% 
+        mutate("V2TRatio.Change" = round(((V2TRatio.x-V2TRatio.y)/V2TRatio.y)*100, digits = 0)) %>% 
+        select(1,2,3,4,5,6,13,14,15)
+
+#NSE Index
+IndexCurrentDayChange <- merge.data.frame(IndexCurrentDay, Index5dayAverage, by="Index.Name") %>% 
+        mutate(Volume.Change = round(((VOLUME - Volume)/Volume)*100, digits = 0)) %>% 
+        select(1,2,3,4,7)
+
+BulkSummaryComp <- merge.data.frame(BulkSummary,NSECurrentDayChange, by="SYMBOL")
+        
+        
+NSETO1 <- NSECurrentDayChange %>% 
+        filter(`TURNOVER (Cr.)` >=50)
+NSETO1Pr <- arrange(NSETO1, desc(`Current Day Price Change (%)`)) %>% 
+        head(15)
+NSETO1Vol <- arrange(NSETO1, desc(Volume.Change)) %>% 
+        filter(`Current Day Price Change (%)`>=0) %>% 
+        head(15)
+
+NSETO2 <- NSECurrentDayChange %>% 
+        filter(`TURNOVER (Cr.)` >=10, `TURNOVER (Cr.)` <50)
+NSETO2Pr <- arrange(NSETO2, desc(`Current Day Price Change (%)`)) %>% 
+        head(15)
+NSETO2Vol <- arrange(NSETO2, desc(Volume.Change)) %>% 
+        filter(`Current Day Price Change (%)`>=0) %>% 
+        head(15)
+
+NSETO3 <- NSECurrentDayChange %>% 
+        filter(`TURNOVER (Cr.)` >=1, `TURNOVER (Cr.)` <10)
+NSETO3Pr <- arrange(NSETO3, desc(`Current Day Price Change (%)`)) %>% 
+        head(15)
+NSETO3Vol <- arrange(NSETO3, desc(Volume.Change)) %>% 
+        filter(`Current Day Price Change (%)`>=0) %>% 
+        head(15)
+
+BSETO1 <- BSECurrentDayChange %>% 
+        filter(`TURNOVER (Lakh.)` >=60)
+BSETO1Pr <- arrange(BSETO1, desc(`Current Day Price Change (%)`)) %>% 
+        head(15)
+BSETO1Vol <- arrange(BSETO1, desc(Volume.Change)) %>% 
+        filter(`Current Day Price Change (%)`>=0) %>% 
+        head(15)
+
+BSETO2 <- BSECurrentDayChange %>% 
+        filter(`TURNOVER (Lakh.)`>=30, `TURNOVER (Lakh.)` <60)
+BSETO2Pr <- arrange(BSETO2, desc(`Current Day Price Change (%)`)) %>% 
+        head(15)
+BSETO2Vol <- arrange(BSETO2, desc(Volume.Change)) %>% 
+        filter(`Current Day Price Change (%)`>=0) %>% 
+        head(15)       
+
+# Writing Reports
+
+write.xlsx(IndexCurrentDayChange, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSE Index", 
+           col.names = TRUE, row.names = FALSE, append = FALSE)
+
+write.xlsx(BulkSummaryComp, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "Bulk Trades", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(NSETO1Pr, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO1 Pr", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(NSETO2Pr, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO2 Pr", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)  
+
+write.xlsx(NSETO3Pr, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO3 Pr", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(NSETO1Vol, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO1 Vol", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(NSETO2Vol, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO2 Vol", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(NSETO3Vol, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "NSETO3 Vol", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(BSETO1Pr, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "BSETO1 Pr", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(BSETO2Pr, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "BSETO2 Pr", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(BSETO1Vol, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "BSETO1 Vol", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
+
+write.xlsx(BSETO2Vol, paste0("~/Documents/Stocks/DailyReport",month,"-",day,".xlsx"), sheetName = "BSETO2 Vol", 
+           col.names = TRUE, row.names = FALSE, append = TRUE)
